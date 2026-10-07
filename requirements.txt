@@ -1,0 +1,14 @@
+torch
+torchaudio
+speechbrain
+silero-vad
+soundfile
+librosa
+imageio-ffmpeg
+opencv-python-headless
+scikit-learn
+seaborn
+joblib
+pandas
+matplotlib
+tqdm
