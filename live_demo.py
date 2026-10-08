@@ -14,6 +14,7 @@ that recording added as "me" (laptop microphone), re-tunes tau on validation dat
 Without the export the file is just saved for the next notebook run. Microphone mismatch (phone vs laptop) is the
 #1 cause of errors, so do this once per microphone.
 """
+import traceback
 import os
 os.environ.setdefault("HF_HUB_OFFLINE", "0")
 import argparse, asyncio, json, time
@@ -55,6 +56,9 @@ vad = load_silero_vad()
 encoder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", savedir=str(MODELS / "ecapa"), run_opts={"device": "cpu"})
 encoder.eval()
 
+import threading
+MODEL_LOCK = threading.Lock()   # Silero VAD (stateful JIT module) and ECAPA must not be called from two threads at once:
+                                # adapt() running next to infer() crashed the process without a Python traceback (2026-10-08).
 M = {}   # the live model: clf, tau, i_me, centroid (hot-swappable)
 
 def load_bundle():
@@ -90,14 +94,15 @@ def embed(batch, bs=32):
 def infer(window):
     """window: float32[WIN] -> (speech_frac, p_me or None, cosine to phone 'me' centroid or None)"""
     window = window - window.mean()
-    segs = speech_segments(window)
-    sfrac = sum(e - s for s, e in segs) / len(window)
-    if sfrac < args.speech_frac_min or rms_db(window) < args.min_level_db:
-        return sfrac, None, None
-    if rms_db(window) > -60:
-        window = normalise(window)
-    e = embed([window])
-    return sfrac, float(M["clf"].predict_proba(e)[0, M["i_me"]]), float(e[0] @ M["centroid"])
+    with MODEL_LOCK:
+        segs = speech_segments(window)
+        sfrac = sum(e - s for s, e in segs) / len(window)
+        if sfrac < args.speech_frac_min or rms_db(window) < args.min_level_db:
+            return sfrac, None, None
+        if rms_db(window) > -60:
+            window = normalise(window)
+        e = embed([window])
+        return sfrac, float(M["clf"].predict_proba(e)[0, M["i_me"]]), float(e[0] @ M["centroid"])
 
 
 def file_embeddings(path):
@@ -106,12 +111,13 @@ def file_embeddings(path):
     if y.ndim > 1: y = y.mean(1)
     assert sr == SR, f"{path}: {sr} Hz, expected {SR}"
     y = y - y.mean()
-    segs = speech_segments(y)
-    speech = np.concatenate([y[s:e] for s, e in segs]) if segs else np.zeros(0, np.float32)
-    if len(speech) < WIN: return np.zeros((0, 192), np.float32), len(speech) / SR
-    speech = normalise(speech)
-    ws = [speech[i:i + WIN] for i in range(0, len(speech) - WIN + 1, SR) if rms_db(speech[i:i + WIN]) > -45]
-    return embed(ws), len(speech) / SR
+    with MODEL_LOCK:                                   # pauses live inference for a second or two
+        segs = speech_segments(y)
+        speech = np.concatenate([y[s:e] for s, e in segs]) if segs else np.zeros(0, np.float32)
+        if len(speech) < WIN: return np.zeros((0, 192), np.float32), len(speech) / SR
+        speech = normalise(speech)
+        ws = [speech[i:i + WIN] for i in range(0, len(speech) - WIN + 1, SR) if rms_db(speech[i:i + WIN]) > -45]
+        return embed(ws), len(speech) / SR
 
 
 def adapt(paths):
@@ -232,9 +238,13 @@ class WS(tornado.websocket.WebSocketHandler):
 
     async def do_adapt(self, path):
         self.write_message({"type": "adapt", "state": "running"})
-        res = await asyncio.get_event_loop().run_in_executor(None, adapt, [str(path)])
+        try:
+            res = await asyncio.get_event_loop().run_in_executor(None, adapt, [str(path)])
+        except Exception as e:                        # otherwise the error is swallowed by ensure_future
+            traceback.print_exc(); res = {"ok": False, "why": f"{type(e).__name__}: {e}"}
         print("adapt:", res)
-        self.write_message({"type": "adapt", "state": "done", **res})
+        try: self.write_message({"type": "adapt", "state": "done", **res})
+        except tornado.websocket.WebSocketClosedError: pass
 
     async def tick(self):
         if self.busy or len(self.s.buf) < WIN:
