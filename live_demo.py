@@ -43,6 +43,7 @@ parser.add_argument("--speech-frac-min", type=float, default=0.3)
 parser.add_argument("--min-level-db", type=float, default=-55.0, help="windows quieter than this (dBFS RMS) are never speech")
 parser.add_argument("--no-adapt", action="store_true", help="never re-train from live recordings")
 parser.add_argument("--quiet", action="store_true", help="do not log every decision")
+parser.add_argument("--dump", default="", help="debug: directory to save each connection's incoming audio (30 s files)")
 args = parser.parse_args()
 torch.set_num_threads(args.threads)
 
@@ -164,12 +165,22 @@ class Session:
         self.probs = deque(maxlen=args.smooth)       # recent P(me) for speech decisions
         self.label, self.cand, self.cand_n = "silence", "silence", 0
         self.recording = None                        # list of chunks while recording, else None
+        self.dump, self.dump_n = [], 0
         self.rec_session = "s6"
 
     def push(self, chunk):
         self.buf = np.concatenate([self.buf, chunk])[-WIN:]
         if self.recording is not None:
             self.recording.append(chunk)
+        if args.dump:
+            self.dump.append(chunk)
+            if sum(map(len, self.dump)) >= 30 * SR: self.flush_dump()
+
+    def flush_dump(self):
+        if not self.dump: return
+        Path(args.dump).mkdir(parents=True, exist_ok=True)
+        out = Path(args.dump) / f"dump_{datetime.now():%Y%m%d_%H%M%S}_{self.dump_n}.wav"
+        sf.write(out, np.concatenate(self.dump), SR); print("dumped", out); self.dump, self.dump_n = [], self.dump_n + 1
 
     def decide(self, sfrac, p_me):
         if p_me is None:
@@ -202,6 +213,8 @@ class WS(tornado.websocket.WebSocketHandler):
         if isinstance(msg, bytes):
             self.s.push(np.frombuffer(msg, dtype=np.float32).copy()); return
         cmd = json.loads(msg)
+        if cmd.get("cmd") == "info":
+            print("client info:", cmd); return
         if cmd.get("cmd") == "record":
             if cmd.get("on"):
                 self.s.rec_session = str(cmd.get("session", "s6")).strip() or "s6"
@@ -244,7 +257,7 @@ class WS(tornado.websocket.WebSocketHandler):
             self.busy = False
 
     def on_close(self):
-        self.timer.stop(); print("client disconnected")
+        self.timer.stop(); self.s.flush_dump(); print("client disconnected")
 
 
 class Page(tornado.web.RequestHandler):

@@ -47,7 +47,7 @@ const TEXT = { me: "ME talking", other: "SOMEONE ELSE talking", silence: "no one
 const SR = 16000, CHUNK = 4000;                      // 250 ms chunks
 const $ = id => document.getElementById(id);
 const banner = $("banner"), video = $("video"), tl = $("timeline"), ctx = tl.getContext("2d");
-let ws, audioCtx, history = [];                      // history: [{t, label}] for the last 60 s
+let ws, audioCtx, trackRate = null, history = [];                      // history: [{t, label}] for the last 60 s
 
 function wsUrl() {                                   // works at /, and behind the code-server /proxy/<port>/ prefix
   const base = location.pathname.endsWith("/") ? location.pathname : location.pathname.replace(/[^/]*$/, "");
@@ -76,6 +76,7 @@ async function start() {
     });
   } catch (e) { $("status").textContent = "camera/microphone blocked: " + e.message; $("start").disabled = false; return; }
   video.srcObject = stream;
+  try { trackRate = stream.getAudioTracks()[0].getSettings().sampleRate || null; } catch (e) {}
 
   // audio: 16 kHz mono float32 -> 250 ms chunks over the websocket
   audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
@@ -86,7 +87,7 @@ async function start() {
       process(inputs) {
         const ch = inputs[0][0]; if (!ch) return true;
         let out;
-        if (this.ratio === 1) out = ch;
+        if (this.ratio === 1) out = Float32Array.from(ch);   // COPY: the browser reuses this buffer between process() calls
         else { out = []; for (; this.phase < ch.length - 1; this.phase += this.ratio) { const i = Math.floor(this.phase), f = this.phase - i; out.push(ch[i] * (1 - f) + ch[i + 1] * f); } this.phase -= ch.length; out = Float32Array.from(out); }
         this.buf.push(out); this.n += out.length;
         if (this.n >= ${CHUNK}) {
@@ -111,7 +112,7 @@ async function start() {
 function connect() {
   $("status").textContent = "connecting to model server…";
   ws = new WebSocket(wsUrl()); ws.binaryType = "arraybuffer";
-  ws.onopen = () => { $("status").textContent = "live"; };
+  ws.onopen = () => { $("status").textContent = "live"; if (audioCtx) ws.send(JSON.stringify({ cmd: "info", contextRate: audioCtx.sampleRate, trackRate: trackRate, ua: navigator.userAgent })); };
   ws.onclose = () => { $("status").textContent = "server connection lost, retrying…"; setTimeout(connect, 1500); };
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
