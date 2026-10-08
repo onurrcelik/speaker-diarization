@@ -90,7 +90,8 @@ Done this session:
 - `README.md` has the metrics table + model recommendations; `Who Is Talking To-Do Plan.md` is the 3-class version.
 - **Live webcam demo added** (`live_demo.py` + `live/index.html`, tornado): browser captures webcam + mic, streams 16 kHz audio over a WebSocket, server runs VAD → ECAPA → clf → smoothing every 0.25 s (~0.1 s compute) and returns labels; page draws banner + timeline. Reachable at `https://student.exposureai.org/lab/proxy/8765/` while `live_demo.py --port 8765` runs. Loopback test passed (me 68/74, other 36/41, silence 49/53, errors at transitions). Page has a "record my voice" button that saves `data/raw/me/s6_live_*.wav` for a laptop-mic session.
 - Room tone: with no `data/raw/silence/` files, Step 2 harvests the pauses of session `ROOM_TONE_FROM = "s1"` (~22 s) instead of synthetic noise (Onur confirmed s1 is the demo room).
-- Results: window-level macro-F1 1.000 / EER 0.7 % on held-out session s5 vs unseen LibriSpeech strangers (caveat: channel mismatch phone vs studio inflates this); synthetic demo 93.8 % frame acc, 8.8 % DER, RTF 1.00.
+- Results (run 3, harvested room tone): window-level macro-F1 1.000 / EER 0.7 % on held-out session s5 vs unseen LibriSpeech strangers (caveat: channel mismatch phone vs studio inflates this); synthetic demo 92.9 % frame acc, 10.0 % DER, RTF 1.01.
+- **Onur tested the live page: lag 2–3 s and 'someone else' while he talked (laptop mic).** Fixes: smoothing cut to 2 decisions / no switch delay (≈1 s lag now); notebook exports `models/embeddings.npz` (cell 18) and pins `s6` to train; `live_demo.py` re-trains instantly when a recording is made from the page (tested: 40 s → 39 windows, val F1 0.991) and on start-up from unseen `*_live_*.wav`. Awaiting Onur's laptop-mic recording to confirm the fix.
 
 ## Next steps (in order)
 

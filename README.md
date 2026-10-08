@@ -39,13 +39,13 @@ The clip → session mapping (`SESSION_OF` in Step 1) was confirmed by Onur on 2
 
 | metric | value |
 |---|---|
-| frame accuracy | 93.8 % |
-| macro-F1 | 0.936 |
-| DER | 8.8 % (miss 0.0 s, false alarm 1.2 s, confusion 0.5 s) |
+| frame accuracy | 92.9 % |
+| macro-F1 | 0.926 |
+| DER | 10.0 % |
 | real-time factor (whole pipeline, 4 CPU threads) | 1.00 |
 | embedding real-time factor alone | 0.22 |
 
-Per class on the demo: me F1 0.951, other F1 0.940, silence F1 0.916. Most of the demo error is at speaker boundaries (the 1.5 s window straddles two labels) and speech bleeding ~0.6 s into each silence gap.
+Most of the demo error is at speaker boundaries (the 1.5 s window straddles two labels) and speech bleeding ~0.6 s into each silence gap.
 
 **Read the window-level numbers with care.** The strangers are clean studio read speech and Onur's clips are phone recordings, so part of the separation may come from the recording channel rather than the voice. The honest test is the real demo video with someone else speaking into the same phone, which does not exist yet.
 
@@ -70,9 +70,9 @@ Press **Start webcam + mic**, allow camera and microphone. The browser shows you
 
 Loopback test (held-out session of Onur, a LibriSpeech stranger and near-silence streamed at real time): 68/74 decisions `me`, 36/41 `other`, 49/53 `silence`; the errors sit at the transitions.
 
-**Microphone mismatch.** The model has only heard Onur through the phone. If the laptop microphone gives weak results, press **Record my voice as training data** on the page, talk for 2–3 minutes (read aloud, then free talk), press Stop: the audio is saved to `data/raw/me/s6_live_<timestamp>.wav` as a new session. Re-run the notebook (it copies nothing over; the new file is simply picked up), then restart `live_demo.py` to load the new classifier.
+**Microphone mismatch and instant adaptation.** The notebook model has only heard Onur through the phone, and through a laptop microphone it tends to answer "someone else". Press **Record my voice as training data** on the page, talk for 1–2 minutes (read aloud, then free talk), press Stop. The audio is saved to `data/raw/me/s6_live_<timestamp>.wav`, and because the notebook exports its training embeddings to `models/embeddings.npz`, the server immediately re-trains the logistic regression with the recording added as `me`, re-tunes τ on validation data, hot-swaps the model and saves it to `models/who_is_talking.joblib` (the bundle records `adapted_with`). Loopback check with 40 s of held-out audio: 39 windows, re-train in a few seconds, val macro-F1 0.991. On start-up the server also adapts from any `*_live_*.wav` the cache has not seen. The next notebook run trains on the `s6` files as a normal session (pinned to train).
 
-Server flags: `--hop` (seconds between decisions), `--smooth` (decisions averaged), `--min-run` (consecutive agreeing decisions before switching label), `--speech-frac-min`, `--min-level-db`, `--threads`.
+Latency: 1.5 s window + 2-decision smoothing + network ≈ 1 s at speaker changes. Server flags: `--hop`, `--smooth`, `--min-run`, `--speech-frac-min`, `--min-level-db`, `--threads`, `--no-adapt`, `--quiet`.
 
 ## Running the notebook
 
@@ -83,7 +83,7 @@ cd /home/coder/workspaces/free-lab
 cd speaker-diarization && ../.venv/bin/jupyter nbconvert --to notebook --execute --inplace notebook.ipynb
 ```
 
-Outputs (git-ignored): `data/clean/`, `models/who_is_talking.joblib` (also loaded by `live_demo.py`), `models/metrics.json`, `data/demo/*_annotated.mp4`.
+Outputs (git-ignored): `data/clean/`, `models/who_is_talking.joblib` (also loaded by `live_demo.py`), `models/embeddings.npz`, `models/metrics.json`, `data/demo/*_annotated.mp4`.
 
 ## Still to do
 

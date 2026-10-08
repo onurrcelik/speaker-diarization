@@ -37,7 +37,8 @@
     <span id="status"></span>
   </div>
   <div id="stats"></div>
-  <p style="color:#888;font-size:13px">Audio is processed in 1.5 s windows every ~0.25 s on the server; the label is smoothed over ±0.5 s, so expect about half a second of delay after someone starts or stops talking. Browser echo cancellation, noise suppression and auto gain are turned off so the microphone sounds like the training data.</p>
+  <p style="color:#888;font-size:13px">Audio is processed in 1.5 s windows about 4× per second on the server, so expect roughly one second of delay after someone starts or stops talking. Browser echo cancellation, noise suppression and auto gain are turned off so the microphone sounds like the training data.<br>
+  <b>If it keeps saying "someone else" while you talk</b>, the model has not heard you through this microphone yet: press <i>Record my voice</i>, talk for 1–2 minutes (read something aloud, then chat), press <i>Stop</i>. The model re-trains in a few seconds and keeps the result.</p>
 </main>
 
 <script>
@@ -118,11 +119,17 @@ function connect() {
       banner.style.background = COLORS[m.label];
       banner.innerHTML = `${TEXT[m.label]} <small>${Math.round(100 * m.conf)}%</small>`;
       history.push({ t: performance.now() / 1000, label: m.label });
-      $("stats").textContent = `P(me) = ${m.p_me === null ? "  -  " : m.p_me.toFixed(2)}   speech in window = ${Math.round(100 * m.speech_frac)}%   level = ${m.level_db} dBFS   compute = ${m.ms} ms   t = ${m.t.toFixed(1)} s`;
+      $("stats").textContent = `P(me) = ${m.p_me === null ? "  -  " : m.p_me.toFixed(2)} (tau ${m.tau.toFixed(2)})   cos to phone-me = ${m.cos === null ? "  -  " : m.cos.toFixed(2)}   speech in window = ${Math.round(100 * m.speech_frac)}%   level = ${m.level_db} dBFS   compute = ${m.ms} ms   t = ${m.t.toFixed(1)} s`;
     } else if (m.type === "record") {
       $("rec").classList.toggle("on", m.on); $("rec").classList.toggle("off", !m.on);
       $("rec").textContent = m.on ? "■ Stop recording" : "● Record my voice as training data";
-      if (!m.on) $("status").textContent = `saved ${m.seconds}s to ${m.path} — re-run the notebook to train on it`;
+      if (!m.on) $("status").textContent = `saved ${m.seconds}s to ${m.path}`;
+    } else if (m.type === "adapt") {
+      if (m.state === "running") $("status").textContent = "re-training the classifier with your recording…";
+      else if (m.ok) $("status").textContent = `adapted: ${m.windows} windows (${m.speech_s}s of speech), P(me) on them ${m.p_me_before} → ${m.p_me_after}, new tau ${m.tau.toFixed(2)}, val macro-F1 ${m.val_f1}. Model saved. Talk now.`;
+      else $("status").textContent = "not adapted: " + m.why;
+    } else if (m.type === "hello") {
+      $("rec").title = m.adapt ? "re-trains the model immediately" : "saved for the next notebook run (no embeddings cache yet)";
     }
   };
 }
@@ -130,7 +137,7 @@ function connect() {
 $("start").onclick = start;
 $("rec").onclick = () => {
   const on = !$("rec").classList.contains("on");
-  if (on && !confirm("Record ONLY your own voice until you press Stop (aim for 2-3 minutes: read something aloud, then talk freely). Continue?")) return;
+  if (on && !confirm("Record ONLY your own voice until you press Stop (aim for 1-2 minutes: read something aloud, then talk freely). Continue?")) return;
   ws.send(JSON.stringify({ cmd: "record", on, session: $("session").value || "s6" }));
   if (on) $("status").textContent = "recording your voice…";
 };
