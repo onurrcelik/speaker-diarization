@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who is talking? live</title>
+<style>
+  :root { --me: rgb(60,180,75); --other: rgb(230,25,75); --silence: rgb(128,128,128); --bg: #141414; --fg: #eee; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; }
+  #banner { padding: 16px 20px; font-size: clamp(22px, 5vw, 40px); font-weight: 700; color: #fff; border-radius: 8px 8px 0 0;
+            background: var(--silence); transition: background .15s; min-height: 1.2em; }
+  #banner small { font-weight: 400; font-size: .5em; opacity: .9; margin-left: .6em; }
+  video { display: block; width: 100%; background: #000; transform: scaleX(-1); }
+  #timeline { display: block; width: 100%; height: 28px; border-radius: 0 0 8px 8px; background: #222; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
+  button { font: inherit; padding: 10px 18px; border: 0; border-radius: 6px; cursor: pointer; background: #2d7ff9; color: #fff; }
+  button.off { background: #444; } button#rec.on { background: var(--other); }
+  input { font: inherit; padding: 8px; width: 4em; border-radius: 6px; border: 1px solid #555; background: #222; color: var(--fg); }
+  #stats { font-family: ui-monospace, monospace; font-size: 13px; color: #aaa; white-space: pre-wrap; }
+  #status { color: #aaa; font-size: 14px; }
+  .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="banner">press Start</div>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="timeline" width="960" height="28"></canvas>
+  <div class="legend" style="font-size:13px;color:#aaa;margin-top:6px">last 60 s:
+    <span style="background:var(--me)"></span>me <span style="background:var(--other)"></span>someone else <span style="background:var(--silence)"></span>no one</div>
+
+  <div class="row">
+    <button id="start">Start webcam + mic</button>
+    <button id="rec" class="off" disabled>● Record my voice as training data</button>
+    <label>session <input id="session" value="s6"></label>
+    <span id="status"></span>
+  </div>
+  <div id="stats"></div>
+  <p style="color:#888;font-size:13px">Audio is processed in 1.5 s windows every ~0.25 s on the server; the label is smoothed over ±0.5 s, so expect about half a second of delay after someone starts or stops talking. Browser echo cancellation, noise suppression and auto gain are turned off so the microphone sounds like the training data.</p>
+</main>
+
+<script>
+const COLORS = { me: "rgb(60,180,75)", other: "rgb(230,25,75)", silence: "rgb(128,128,128)" };
+const TEXT = { me: "ME talking", other: "SOMEONE ELSE talking", silence: "no one talking" };
+const SR = 16000, CHUNK = 4000;                      // 250 ms chunks
+const $ = id => document.getElementById(id);
+const banner = $("banner"), video = $("video"), tl = $("timeline"), ctx = tl.getContext("2d");
+let ws, audioCtx, history = [];                      // history: [{t, label}] for the last 60 s
+
+function wsUrl() {                                   // works at /, and behind the code-server /proxy/<port>/ prefix
+  const base = location.pathname.endsWith("/") ? location.pathname : location.pathname.replace(/[^/]*$/, "");
+  return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + base + "ws";
+}
+
+function drawTimeline() {
+  const now = performance.now() / 1000, span = 60, W = tl.width, H = tl.height;
+  ctx.fillStyle = "#222"; ctx.fillRect(0, 0, W, H);
+  history = history.filter(h => now - h.t < span);
+  for (let i = 0; i < history.length; i++) {
+    const x0 = W * (1 - (now - history[i].t) / span);
+    const x1 = i + 1 < history.length ? W * (1 - (now - history[i + 1].t) / span) : W;
+    ctx.fillStyle = COLORS[history[i].label]; ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+  }
+  requestAnimationFrame(drawTimeline);
+}
+
+async function start() {
+  $("start").disabled = true; $("status").textContent = "asking for camera + microphone…";
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 960 }, facingMode: "user" },
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+  } catch (e) { $("status").textContent = "camera/microphone blocked: " + e.message; $("start").disabled = false; return; }
+  video.srcObject = stream;
+
+  // audio: 16 kHz mono float32 -> 250 ms chunks over the websocket
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
+  const ratio = audioCtx.sampleRate / SR;            // 1 unless the browser refused 16 kHz (then we resample linearly)
+  const worklet = `
+    class Chunker extends AudioWorkletProcessor {
+      constructor() { super(); this.buf = []; this.n = 0; this.ratio = ${ratio}; this.phase = 0; }
+      process(inputs) {
+        const ch = inputs[0][0]; if (!ch) return true;
+        let out;
+        if (this.ratio === 1) out = ch;
+        else { out = []; for (; this.phase < ch.length - 1; this.phase += this.ratio) { const i = Math.floor(this.phase), f = this.phase - i; out.push(ch[i] * (1 - f) + ch[i + 1] * f); } this.phase -= ch.length; out = Float32Array.from(out); }
+        this.buf.push(out); this.n += out.length;
+        if (this.n >= ${CHUNK}) {
+          const all = new Float32Array(this.n); let o = 0; for (const b of this.buf) { all.set(b, o); o += b.length; }
+          this.port.postMessage(all.slice(0, ${CHUNK}), [all.slice(0, ${CHUNK}).buffer]);
+          const rest = all.slice(${CHUNK}); this.buf = rest.length ? [rest] : []; this.n = rest.length;
+        }
+        return true;
+      }
+    }
+    registerProcessor("chunker", Chunker);`;
+  await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([worklet], { type: "application/javascript" })));
+  const node = new AudioWorkletNode(audioCtx, "chunker");
+  audioCtx.createMediaStreamSource(stream).connect(node);   // not connected to destination: nothing is played back
+  node.port.onmessage = e => { if (ws && ws.readyState === 1) ws.send(e.data.buffer); };
+
+  connect();
+  requestAnimationFrame(drawTimeline);
+  $("rec").disabled = false;
+}
+
+function connect() {
+  $("status").textContent = "connecting to model server…";
+  ws = new WebSocket(wsUrl()); ws.binaryType = "arraybuffer";
+  ws.onopen = () => { $("status").textContent = "live"; };
+  ws.onclose = () => { $("status").textContent = "server connection lost, retrying…"; setTimeout(connect, 1500); };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "pred") {
+      banner.style.background = COLORS[m.label];
+      banner.innerHTML = `${TEXT[m.label]} <small>${Math.round(100 * m.conf)}%</small>`;
+      history.push({ t: performance.now() / 1000, label: m.label });
+      $("stats").textContent = `P(me) = ${m.p_me === null ? "  -  " : m.p_me.toFixed(2)}   speech in window = ${Math.round(100 * m.speech_frac)}%   level = ${m.level_db} dBFS   compute = ${m.ms} ms   t = ${m.t.toFixed(1)} s`;
+    } else if (m.type === "record") {
+      $("rec").classList.toggle("on", m.on); $("rec").classList.toggle("off", !m.on);
+      $("rec").textContent = m.on ? "■ Stop recording" : "● Record my voice as training data";
+      if (!m.on) $("status").textContent = `saved ${m.seconds}s to ${m.path} — re-run the notebook to train on it`;
+    }
+  };
+}
+
+$("start").onclick = start;
+$("rec").onclick = () => {
+  const on = !$("rec").classList.contains("on");
+  if (on && !confirm("Record ONLY your own voice until you press Stop (aim for 2-3 minutes: read something aloud, then talk freely). Continue?")) return;
+  ws.send(JSON.stringify({ cmd: "record", on, session: $("session").value || "s6" }));
+  if (on) $("status").textContent = "recording your voice…";
+};
+</script>
+</body>
+</html>

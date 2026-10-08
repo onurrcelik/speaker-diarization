@@ -81,7 +81,26 @@ LibriSpeech dev-clean strangers only (works out of the box), or also a clip of a
 - The notebook sets `HF_HUB_OFFLINE=0` itself because the hub defaults it to 1; the ECAPA model download needs network once.
 - Gotcha hit this session: a background shell command whose log redirect pointed at a non-existent folder reported success while doing nothing. Run installs in the foreground and verify with an import.
 
+## Status update 2026-10-08
+
+Done this session:
+- `notebook.ipynb` converted to **3 classes** and executed in place on the real recordings (`DRY_RUN = False`). Outputs are in the committed notebook.
+- Step 1 now copies `recordings/*.m4a` → `data/raw/me/s<N>_clipNN.m4a` via a `SESSION_OF` dict; `assign_splits` groups by the `s<N>_` prefix and pins `PIN_TRAIN_SESSIONS = {"s1"}` to train. Mapping **confirmed by Onur 2026-10-08** (OPEN QUESTION 1 closed): 50–55 = s1 (Part A read, Part B free answers, Part C lines), 56–61 = s2 (same structure), 62 = s3 (phone-call style read), 63 = s5 (Turkish read, "Pazar Kahvaltısı"). Test session s5 is Turkish, so the window metrics are cross-language.
+- Synthetic room tone is now generated whenever `data/raw/silence/` has no real files, not only in dry run.
+- `README.md` has the metrics table + model recommendations; `Who Is Talking To-Do Plan.md` is the 3-class version.
+- **Live webcam demo added** (`live_demo.py` + `live/index.html`, tornado): browser captures webcam + mic, streams 16 kHz audio over a WebSocket, server runs VAD → ECAPA → clf → smoothing every 0.25 s (~0.1 s compute) and returns labels; page draws banner + timeline. Reachable at `https://student.exposureai.org/lab/proxy/8765/` while `live_demo.py --port 8765` runs. Loopback test passed (me 68/74, other 36/41, silence 49/53, errors at transitions). Page has a "record my voice" button that saves `data/raw/me/s6_live_*.wav` for a laptop-mic session.
+- Room tone: with no `data/raw/silence/` files, Step 2 harvests the pauses of session `ROOM_TONE_FROM = "s1"` (~22 s) instead of synthetic noise (Onur confirmed s1 is the demo room).
+- Results: window-level macro-F1 1.000 / EER 0.7 % on held-out session s5 vs unseen LibriSpeech strangers (caveat: channel mismatch phone vs studio inflates this); synthetic demo 93.8 % frame acc, 8.8 % DER, RTF 1.00.
+
 ## Next steps (in order)
+
+1. Onur tries the live demo (`live_demo.py --port 8765`, proxy URL above) with the laptop webcam. Onur does **not** want a filmed demo video; the live page is the demo.
+2. If the laptop mic hurts `me` recall: record a 2–3 min session from the page (saved as `s6_live_*.wav`), re-run the notebook, restart the server.
+3. Optional: another person's voice on the laptop mic → `data/raw/other/` (closes the phone-vs-studio channel caveat on the metrics).
+4. Refresh the metrics table in `README.md` after any re-run.
+
+## Previous next steps (2026-10-07, for reference)
+
 
 1. Get answers to the two open questions.
 2. **Convert notebook to 3 classes**:
