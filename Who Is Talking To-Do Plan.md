@@ -19,7 +19,7 @@ Record several short sessions rather than one long one; the test split is a whol
 - [x] **Clip → session mapping confirmed:** 50–55 = session 1, 56–61 = session 2, 62 = session 3 (phone-call style), 63 = session 5 (Turkish).
 - [x] **Room tone:** taken from the pauses in session 1 (demo room); no separate clips needed.
 - [ ] **Other people (optional):** another person on the same phone, or a podcast or YouTube video played aloud in the room. Helps the demo; LibriSpeech strangers are used anyway.
-- [ ] **Live demo** instead of a filmed video: run `live_demo.py`, open the proxy link, start the webcam, talk / pause / let someone else talk.
+- [x] **Live demo** instead of a filmed video: run `live_demo.py`, open the proxy link, start the webcam, talk / pause / let someone else talk. Works on Onur's laptop after a 2.5 min laptop-mic recording (2026-10-08).
 
 Using the same phone and room as the demo for at least one session matters most: microphone mismatch is the top cause of errors.
 
@@ -35,7 +35,7 @@ Drag files into these folders in the Jupyter file browser. Leave the `DRYRUN_*` 
 | Demo video, renamed to `demo.mp4` | `data/demo/` |
 
 - [x] My recordings copied to `data/raw/me/` (done automatically by the notebook from `recordings/`)
-- [ ] (Optional) laptop-mic session recorded from the live page if `me` is weak through the webcam mic
+- [x] Laptop-mic session recorded from the live page (`data/raw/me/s6_live_20261008_135303.wav`, 156 s); the model adapted to it instantly
 - [ ] **(Optional, needed for a demo accuracy score)** Watch the demo and write `data/demo/demo_labels.csv`, one row per stretch of time (template: `demo_labels_TEMPLATE.csv`):
 
 ```csv

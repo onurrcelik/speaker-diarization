@@ -81,14 +81,17 @@ browser: banner (ME / SOMEONE ELSE / no one + %), 60 s timeline, stats line (P(m
 4. **Root cause: `live/index.html` AudioWorklet stored a reference to the 128-sample input block (`out = ch`) instead of a copy; the browser reuses that buffer, so each 4000-sample chunk was one 128-sample block repeated ~31×.** A 125 Hz buzz with the spectral colour of the voice reached the server. Fixed 09:04: `out = Float32Array.from(ch)`. The page is re-read on every request, no server restart needed. **Not yet re-tested by Onur** — this is the next step.
 5. Dump files from the buggy page are useless as training data. No `*_live_*.wav` was recorded, so nothing bad entered the model (adaptation would have refused anyway: < 10 speech windows).
 
-## Next steps (in order)
+## Outcome (2026-10-08, 13:50–14:10)
 
-1. Onur reloads the page, presses Start, talks 20 s. Expect: speech_frac 0.8–1.0 while talking, cos > 0.3, banner "ME". Check the server log.
-2. If "ME" is unstable through the laptop mic (P(me) around τ, cos 0.2–0.4): press Record, talk 1–2 min, Stop → instant adaptation; talk again.
-3. Have someone else talk (or play a YouTube voice) to confirm "SOMEONE ELSE", and pause to confirm "no one".
-4. Remove `--dump` from the server command once the live path is confirmed (it saves audio to the scratchpad).
-5. Re-run the notebook once an `s6_live_*.wav` exists so the notebook metrics include the laptop mic (s6 is pinned to train, so the test stays s5). Refresh README metrics.
-6. Commit when Onur asks (he committed `5379eea` himself).
+- After the buffer-copy fix the page recognised Onur ("PERFECT!!!"), but P(me) through the laptop mic was median 0.34 (cos 0.25 vs 0.54 on the phone): confidence 50–75 %, one-second flickers to "someone else". Server now runs `--smooth 3`, `--dump` removed.
+- Onur recorded 156 s (English + Turkish read-aloud + free talk) via the Record button → `data/raw/me/s6_live_20261008_135303.wav`. **The server crashed the moment it saved** (no Python traceback): `adapt()` ran in the executor concurrently with `infer()` on the same Silero/ECAPA modules. Fix: `MODEL_LOCK` around VAD+embedding in `infer()` and `file_embeddings()`, try/except in `do_adapt`, server started with `-X faulthandler`. Start-up adaptation then applied the file: 131 windows, P(me) on them 0.72 → 0.93, τ 0.40 → 0.62, val macro-F1 0.997; `models/who_is_talking.joblib` and `embeddings.npz` updated (`adapted_with`).
+- Onur: "okay it works perfectly. done!"
+
+## Next steps (optional)
+
+1. Re-run the notebook so the metrics include s6 (pinned to train, test stays s5). Refresh README metrics. Note the notebook overwrites `who_is_talking.joblib`; the server re-adapts on start-up only for files not in `embeddings.npz`, which the notebook rewrites, so after a notebook run s6 is already in training and no re-adaptation is needed.
+2. Confirm "SOMEONE ELSE" with another real voice in the room, and "no one" with silence.
+3. Commit when Onur asks. Server restart command: see Environment; current process was started with `bash -c '../.venv/bin/python -X faulthandler live_demo.py --port 8765 --threads 6 --smooth 3'` (kill via `pgrep -f "^\.\./\.venv/bin/python -X faulthandler live_demo.py"`).
 
 ## Environment
 

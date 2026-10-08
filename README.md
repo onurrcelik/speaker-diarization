@@ -72,7 +72,9 @@ Loopback test (held-out session of Onur, a LibriSpeech stranger and near-silence
 
 **Microphone mismatch and instant adaptation.** The notebook model has only heard Onur through the phone, and through a laptop microphone it tends to answer "someone else". Press **Record my voice as training data** on the page, talk for 1–2 minutes (read aloud, then free talk), press Stop. The audio is saved to `data/raw/me/s6_live_<timestamp>.wav`, and because the notebook exports its training embeddings to `models/embeddings.npz`, the server immediately re-trains the logistic regression with the recording added as `me`, re-tunes τ on validation data, hot-swaps the model and saves it to `models/who_is_talking.joblib` (the bundle records `adapted_with`). Loopback check with 40 s of held-out audio: 39 windows, re-train in a few seconds, val macro-F1 0.991. On start-up the server also adapts from any `*_live_*.wav` the cache has not seen. The next notebook run trains on the `s6` files as a normal session (pinned to train).
 
-Latency: 1.5 s window + 2-decision smoothing + network ≈ 1 s at speaker changes. Server flags: `--hop`, `--smooth`, `--min-run`, `--speech-frac-min`, `--min-level-db`, `--threads`, `--no-adapt`, `--quiet`.
+Result on Onur's laptop (2026-10-08): before adaptation P(me) while he talked was ~0.34 median (confidence 50–75 %, occasional flips to "someone else"); after a 2.5 min recording (131 windows, English + Turkish) P(me) on those windows went 0.72 → 0.93, τ 0.40 → 0.62, val macro-F1 0.997, and the live page was stable. Adaptation and live inference share the models under a lock (running them in parallel crashed the process).
+
+Latency: 1.5 s window + 3-decision smoothing + network ≈ 1 s at speaker changes. Server flags: `--hop`, `--smooth`, `--min-run`, `--speech-frac-min`, `--min-level-db`, `--threads`, `--no-adapt`, `--quiet`.
 
 ## Running the notebook
 
